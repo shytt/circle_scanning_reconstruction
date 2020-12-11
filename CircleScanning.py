@@ -6,8 +6,9 @@
 import vtk
 import cv2
 import math
+import argparse
 
-import tables
+from  tables import *
 
 class Point(object):
     def __init__(self, x, y, z):
@@ -17,20 +18,20 @@ class Point(object):
         self.Z = z
 
     def __add__(self, o): 
-    	return Point(self.X+o.X, self.Y+o.Y, self.Z+o.Z)
+        return Point(self.X+o.X, self.Y+o.Y, self.Z+o.Z)
 
     def __sub__(self, o):
-    	return Point(self.X-o.X, self.Y-o.Y, self.Z-o.Z)
+        return Point(self.X-o.X, self.Y-o.Y, self.Z-o.Z)
 
     def __mul__(self, i):
-    	return Point(self.X*i, self.Y*i, self.Z*i)
+        return Point(self.X*i, self.Y*i, self.Z*i)
 
     def __truediv__(self, i):
-    	return Point(self.X/i, self.Y/i, self.Z/i)
+        return Point(self.X/i, self.Y/i, self.Z/i)
 
     def normal(self):
-    	sqrt = math.sqrt(self.X**2, self.Y**2,self.Z**2)
-    	return Point(self.X/sqrt, self.Y/sqrt, self.Z/sqrt)
+        sqrt = math.sqrt(self.X**2 + self.Y**2 + self.Z**2)
+        return Point(self.X/sqrt, self.Y/sqrt, self.Z/sqrt)
 
 
 class CS():
@@ -39,8 +40,8 @@ class CS():
         self.start_idx = args.startidx
         self.end_idx   = args.endidx
         self.iso       = args.isovalue
-        self.camera    = Point(args.camera)
-        self.center    = Point(args.center)
+        self.camera    = Point(args.camera[0],args.camera[1],args.camera[2])
+        self.center    = Point(args.center[0],args.center[1],args.center[2])
 
         self.gridX, self.gridY = args.resolution
 
@@ -92,8 +93,8 @@ class CS():
         iren.Start()
 
     def marchingCube(self):
-
         for z in range(self.start_idx,self.end_idx):
+            print(z)
             for y in range(self.shape[0]-1):
                 for x in range(self.shape[1]-1):
                     value = []
@@ -101,11 +102,14 @@ class CS():
                     ind = [[0,0,0],[1,0,0],[1,0,1],[0,0,1],
                            [0,1,0],[1,1,0],[1,1,1],[0,1,1]]
                     for i in range(8):
-                        value.append(self.images[z+ind[i][2]][y+ind[i][1]][x+ind[i][0]])
+                        value.append(self.images[z-self.start_idx+ind[i][2]][y+ind[i][1],x+ind[i][0]])
                         points.append(Point(x+ind[i][0],y+ind[i][1],z+ind[i][2]))
                     for i in range(6):
                         # 6 triangles
-                        self.add_faces(self,value,points,TeraTable[i])
+                        self.add_faces(value,points,TeraTable[i])
+
+
+
 
     def add_faces(self,v,p,t):
         tableIndex = 0
@@ -113,7 +117,7 @@ class CS():
             if v[t[idx]] < self.iso:
                  tableIndex = tableIndex| (1 << idx)
         tf = TeraFace.get(tableIndex)
-        for i in range(len(tf)/3):
+        for i in range(int(len(tf)/3)):
             p1 = self.add_line(p[t[tf[i][0]]],p[t[tf[i][1]]])
             p2 = self.add_line(p[t[tf[i+1][0]]],p[t[tf[i+1][1]]])
             p3 = self.add_line(p[t[tf[i+2][0]]],p[t[tf[i+2][1]]])
@@ -121,28 +125,28 @@ class CS():
             self.m_polys.InsertNextCell(3,[p1,p2,p3])
 
     def add_line(self,p1,p2):
-    	v1 = self.rotate(p1)
-    	v2 = self.rotate(p2)
+        v1 = self.rotate(p1)
+        v2 = self.rotate(p2)
 
-    	mid = (v1+v2)/2
-    	pid = self.m_points.InsertNextPoint([mid.X,mid.Y,mid.Z])
-    	return pid
+        mid = (v1+v2)/2
+        pid = self.m_points.InsertNextPoint([mid.X,mid.Y,mid.Z])
+        return pid
 
-   	def rotate(self,p):
-   		# rotate around z axis
-   		arc = math.radians(p.Z/2-60)
-   		vec = self.camera-self.center
-   		vrc = Point(vec.X*math.cos(arc)-vec.Y*math.sin(arc),
-   			       vec.X*math.sin(arc)+vec.Y*math.cos(arc),
-   			       vec.Z) + self.center
-   		assert(vrc.Z == 0)
-   		dirc = (self.center-vrc).normal()
+    def rotate(self,p):
+        # rotate around z axis
+        arc = math.radians(p.Z/2-60)
+        vec = self.camera-self.center
+        vrc = Point(vec.X*math.cos(arc)-vec.Y*math.sin(arc),
+                   vec.X*math.sin(arc)+vec.Y*math.cos(arc),
+                   vec.Z) + self.center
+        assert(vrc.Z == 0)
+        dirc = (self.center-vrc).normal()
 
 
-   		v = Point(vrc.X,vrc.Y,vrc.Z)
-   		v = v + dirc * p.Y * self.gridY 
-   		v = v + Point(0,0,1) * p.X * self.gridX
-   		return v
+        v = Point(vrc.X,vrc.Y,vrc.Z)
+        v = v + dirc * p.Y * self.gridY 
+        v = v + Point(0,0,1) * p.X * self.gridX
+        return v
 
 
 def load_image(filename, start_idx,end_idx):
@@ -156,19 +160,20 @@ def load_image(filename, start_idx,end_idx):
 
 
 def get_program_parameters():
-    import argparse
-    description = 'The skin extracted from a CT dataset of the head.'
-    epilogue = '''
-    Derived from VTK/Examples/Cxx/Medical1.cxx
-    This example reads a volume dataset, extracts an isosurface that
-     represents the skin and displays it.
-    '''
-    parser = argparse.ArgumentParser(description=description, epilog=epilogue,
-                                     formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('filename', help='FullHead.mhd.')
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-f", "--filename", help="the volume data location. Without the index of image. e.g. */image")
+    parser.add_argument("-s", "--startidx", type=int ,default = 0, help="the starting index of the images")
+    parser.add_argument("-e", "--endidx", type = int, default = 0, help="the ending index of the images")
+    parser.add_argument("-r", "--resolution",type = float, nargs=2, default = [0.1,0.1], help="the resolution of the pixel of the image")
+    parser.add_argument("--camera",type = int, nargs=3, default = [0,0,0], help="the initial position of the probe")
+    parser.add_argument("--center",type = int, nargs=3, default = [0,0,0], help="the rotation center of the probe")
+    parser.add_argument("-v", "--isovalue", type = float, default = 0, help="the isovalue of the surface")
+    # iso-surface related, signal source related, resolution, step size
     args = parser.parse_args()
-    return args.filename
+    return args
 
 
 if __name__ == '__main__':
-    main()
+    cs = CS()
+    cs.marchingCube()
+    cs.render()
