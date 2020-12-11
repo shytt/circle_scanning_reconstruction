@@ -5,114 +5,154 @@
 
 import vtk
 import cv2
+import math
 
-def load_images(filename, start_idx, end_idx):
+import tables
 
-    # create an array to store all the file names
-    fileArray = vtkStringArray()
-    for i in range(start_idx,end_idx):
-        curFile = "{}_{}".format(filename, i) 
-        fileArray.InsertNextValue(curFile)
+class Point(object):
+    def __init__(self, x, y, z):
+        '''Defines x and y variables'''
+        self.X = x
+        self.Y = y
+        self.Z = z
 
-    # the reader to load to bmp images
-    reader = vtk.vtkBMPReader()
-    reader.SetFileNames(fileArray)
-    reader.SetAllow8BitBMP(16) 
+    def __add__(self, o): 
+    	return Point(self.X+o.X, self.Y+o.Y, self.Z+o.Z)
+
+    def __sub__(self, o):
+    	return Point(self.X-o.X, self.Y-o.Y, self.Z-o.Z)
+
+    def __mul__(self, i):
+    	return Point(self.X*i, self.Y*i, self.Z*i)
+
+    def __truediv__(self, i):
+    	return Point(self.X/i, self.Y/i, self.Z/i)
+
+    def normal(self):
+    	sqrt = math.sqrt(self.X**2, self.Y**2,self.Z**2)
+    	return Point(self.X/sqrt, self.Y/sqrt, self.Z/sqrt)
+
+
+class CS():
+    def __init__(self):
+        args = get_program_parameters()
+        self.start_idx = args.startidx
+        self.end_idx   = args.endidx
+        self.iso       = args.isovalue
+        self.camera    = Point(args.camera)
+        self.center    = Point(args.center)
+
+        self.gridX, self.gridY = args.resolution
+
+        self.images    = load_image(args.filename,args.startidx,args.endidx)
+        self.shape     = self.images[0].shape
+        self.m_polys   = vtk.vtkCellArray()
+        self.m_points  = vtk.vtkPoints()
+
+    def render(self):
+        polyData = vtk.vtkPolyData()
+        polyData.SetPoints(self.m_points)
+        polyData.SetPolys(self.m_polys)
+
+        mapper = vtk.vtkPolyDataMapper()
+        mapper.SetInputData(polyData)
+        mapper.ScalarVisibilityOff()
+
+        actor = vtk.vtkActor()
+        actor.SetMapper(mapper)
+        actor.GetProperty().SetDiffuseColor([255, 125, 64])
+
+        camera = vtk.vtkCamera()
+        camera.SetViewUp(0, 0, -1)
+        camera.SetPosition(0, -1, 0)
+        camera.SetFocalPoint(0, 0, 0)
+        camera.ComputeViewPlaneNormal()
+        camera.Azimuth(30.0)
+        camera.Elevation(30.0)
+
+        renderer = vtk.vtkRenderer()
+        renderer.AddActor(actor)
+        renderer.SetActiveCamera(camera)
+        renderer.ResetCamera()
+        camera.Dolly(1.5)
+        renderer.SetBackground(0, 0, 0);
+
+        renWin = vtk.vtkRenderWindow()
+        renWin.AddRenderer(renderer)
+
+        iren = vtk.vtkRenderWindowInteractor()
+        iren.SetRenderWindow(renWin)
+
+        renWin.SetSize(640, 480)
+
+        renderer.ResetCameraClippingRange()
+
+    
+        iren.Initialize()
+        iren.Start()
+
+    def marchingCube(self):
+
+        for z in range(self.start_idx,self.end_idx):
+            for y in range(self.shape[0]-1):
+                for x in range(self.shape[1]-1):
+                    value = []
+                    points = []
+                    ind = [[0,0,0],[1,0,0],[1,0,1],[0,0,1],
+                           [0,1,0],[1,1,0],[1,1,1],[0,1,1]]
+                    for i in range(8):
+                        value.append(self.images[z+ind[i][2]][y+ind[i][1]][x+ind[i][0]])
+                        points.append(Point(x+ind[i][0],y+ind[i][1],z+ind[i][2]))
+                    for i in range(6):
+                        # 6 triangles
+                        self.add_faces(self,value,points,TeraTable[i])
+
+    def add_faces(self,v,p,t):
+        tableIndex = 0
+        for idx in range(4):
+            if v[t[idx]] < self.iso:
+                 tableIndex = tableIndex| (1 << idx)
+        tf = TeraFace.get(tableIndex)
+        for i in range(len(tf)/3):
+            p1 = self.add_line(p[t[tf[i][0]]],p[t[tf[i][1]]])
+            p2 = self.add_line(p[t[tf[i+1][0]]],p[t[tf[i+1][1]]])
+            p3 = self.add_line(p[t[tf[i+2][0]]],p[t[tf[i+2][1]]])
+
+            self.m_polys.InsertNextCell(3,[p1,p2,p3])
+
+    def add_line(self,p1,p2):
+    	v1 = self.rotate(p1)
+    	v2 = self.rotate(p2)
+
+    	mid = (v1+v2)/2
+    	pid = self.m_points.InsertNextPoint([mid.X,mid.Y,mid.Z])
+    	return pid
+
+   	def rotate(self,p):
+   		# rotate around z axis
+   		arc = math.radians(p.Z/2-60)
+   		vec = self.camera-self.center
+   		vrc = Point(vec.X*math.cos(arc)-vec.Y*math.sin(arc),
+   			       vec.X*math.sin(arc)+vec.Y*math.cos(arc),
+   			       vec.Z) + self.center
+   		assert(vrc.Z == 0)
+   		dirc = (self.center-vrc).normal()
+
+
+   		v = Point(vrc.X,vrc.Y,vrc.Z)
+   		v = v + dirc * p.Y * self.gridY 
+   		v = v + Point(0,0,1) * p.X * self.gridX
+   		return v
+
 
 def load_image(filename, start_idx,end_idx):
     images = []
     for i in range(start_idx,end_idx+1):
-        curFile = "{}_{}".format(filename, i) 
-        img = cv.imread(curFile,0)
-        images.append(img)
-
-
-
-def main():
-    colors = vtk.vtkNamedColors()
-
-    fileName = get_program_parameters()
-
-    colors.SetColor("BoneColor", [255, 125, 64, 255])
-    colors.SetColor("BkgColor", [51, 77, 102, 255])
-
-    # Create the renderer, the render window, and the interactor. The renderer
-    # draws into the render window, the interactor enables mouse- and
-    # keyboard-based interaction with the data within the render window.
-    #
-    aRenderer = vtk.vtkRenderer()
-    renWin = vtk.vtkRenderWindow()
-    renWin.AddRenderer(aRenderer)
-
-    iren = vtk.vtkRenderWindowInteractor()
-    iren.SetRenderWindow(renWin)
-
-    reader = vtk.vtkMetaImageReader()
-    reader.SetFileName(fileName)
-
-    # An isosurface, or contour value of 500 is known to correspond to the
-    # skin of the patient.
-    skinExtractor = vtk.vtkMarchingCubes()
-    skinExtractor.SetInputConnection(reader.GetOutputPort())
-    skinExtractor.SetValue(0, 950)
-
-    skinMapper = vtk.vtkPolyDataMapper()
-    skinMapper.SetInputConnection(skinExtractor.GetOutputPort())
-    skinMapper.ScalarVisibilityOff()
-
-    skin = vtk.vtkActor()
-    skin.SetMapper(skinMapper)
-    skin.GetProperty().SetDiffuseColor(colors.GetColor3d("SkinColor"))
-
-    # An outline provides context around the data.
-    #
-    outlineData = vtk.vtkOutlineFilter()
-    outlineData.SetInputConnection(reader.GetOutputPort())
-
-    mapOutline = vtk.vtkPolyDataMapper()
-    mapOutline.SetInputConnection(outlineData.GetOutputPort())
-
-    outline = vtk.vtkActor()
-    outline.SetMapper(mapOutline)
-    outline.GetProperty().SetColor(colors.GetColor3d("Black"))
-
-    # It is convenient to create an initial view of the data. The FocalPoint
-    # and Position form a vector direction. Later on (ResetCamera() method)
-    # this vector is used to position the camera to look at the data in
-    # this direction.
-    aCamera = vtk.vtkCamera()
-    aCamera.SetViewUp(0, 0, -1)
-    aCamera.SetPosition(0, -1, 0)
-    aCamera.SetFocalPoint(0, 0, 0)
-    aCamera.ComputeViewPlaneNormal()
-    aCamera.Azimuth(30.0)
-    aCamera.Elevation(30.0)
-
-    # Actors are added to the renderer. An initial camera view is created.
-    # The Dolly() method moves the camera towards the FocalPoint,
-    # thereby enlarging the image.
-    aRenderer.AddActor(outline)
-    aRenderer.AddActor(skin)
-    aRenderer.SetActiveCamera(aCamera)
-    aRenderer.ResetCamera()
-    aCamera.Dolly(1.5)
-
-    # Set a background color for the renderer and set the size of the
-    # render window (expressed in pixels).
-    aRenderer.SetBackground(colors.GetColor3d("BkgColor"))
-    renWin.SetSize(640, 480)
-
-    # Note that when camera movement occurs (as it does in the Dolly()
-    # method), the clipping planes often need adjusting. Clipping planes
-    # consist of two planes: near and far along the view direction. The
-    # near plane clips out objects in front of the plane the far plane
-    # clips out objects behind the plane. This way only what is drawn
-    # between the planes is actually rendered.
-    aRenderer.ResetCameraClippingRange()
-
-    # Initialize the event loop and then start it.
-    iren.Initialize()
-    iren.Start()
+        curFile = "{}_{}.bmp".format(filename, i) 
+        img = cv2.imread(curFile)
+        img_gray = cv2.cvtColor(img,cv2.COLOR_RGB2GRAY)
+        images.append(img_gray)
+    return images
 
 
 def get_program_parameters():
